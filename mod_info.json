@@ -2,7 +2,7 @@
   "id": "megastructure_patch",
   "name": "zz Megastructure Patch",
   "author": "gamer",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Force spawn player faction starting colony in a random Hypershunt system with both Nidavleir Complex and Pluto Mining Station. Disable when not used since it overwrites ATOD mod",
   "gameVersion": "0.98a-RC8",
   "jars": ["jars/AOTDMegaPatch.jar"],

@@ -15,13 +15,14 @@ import com.fs.starfarer.api.impl.campaign.ids.Factions;
 import com.fs.starfarer.api.campaign.econ.SubmarketAPI;
 import com.fs.starfarer.api.impl.campaign.ids.Industries;
 import com.fs.starfarer.api.impl.campaign.ids.Submarkets;
+import com.fs.starfarer.api.util.IntervalUtil;
 import data.kaysaar.aotd.vok.campaign.econ.globalproduction.models.GPManager;
 import data.kaysaar.aotd.vok.misc.AoTDMisc;
+import org.apache.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-
 public class AoTDVokModPlugin extends BaseModPlugin {
 
     private static final String SPAWN_FLAG = "$aotd_v_megastructures_spawned";
@@ -68,7 +69,7 @@ public class AoTDVokModPlugin extends BaseModPlugin {
 
     public static class OwnFactionRelocationScript implements EveryFrameScript {
         private final String targetSystemId;
-        private final com.fs.starfarer.api.util.IntervalUtil interval = new com.fs.starfarer.api.util.IntervalUtil(0.1f, 0.2f);
+        private final IntervalUtil interval = new IntervalUtil(0.1f, 0.2f);
         private boolean done = false;
         private boolean relocated = false;
 
@@ -184,130 +185,109 @@ public class AoTDVokModPlugin extends BaseModPlugin {
                 }
             }
         }
+        private static final Logger log = Global.getLogger(AoTDVokModPlugin.class);
 
         private void relocateColony(MarketAPI oldMarket, PlanetAPI targetPlanet) {
-            // Remove any pre-existing market on the target so we don't inherit wrong ownership/state.
-            MarketAPI existingNewMarket = targetPlanet.getMarket();
-            List<MarketConditionAPI> existingNewConditions = existingNewMarket.getConditions();
+            // 1. Capture the original conditions from the planet's "wild" market
+            MarketAPI wildMarket = targetPlanet.getMarket();
+            List<String> conditionIdsToCopy = new ArrayList<>();
+            if (wildMarket != null) {
+                for (MarketConditionAPI cond : wildMarket.getConditions()) {
+                    conditionIdsToCopy.add(cond.getId());
+                }
+            }
+
+            // 2. Create the new Player Market
             MarketAPI targetMarket = Global.getFactory().createMarket(
                     targetPlanet.getId() + "_aotd_colony",
                     targetPlanet.getName(),
                     oldMarket != null ? oldMarket.getSize() : 3
             );
 
-            for (MarketConditionAPI existingNewCondition : existingNewConditions) {
-                if (existingNewCondition == null) continue;
+            // 3. CRITICAL: Set Faction and Survey Level BEFORE registration
+            targetMarket.setFactionId(Factions.PLAYER);
+            targetMarket.setPlayerOwned(true);
+            targetMarket.setSurveyLevel(MarketAPI.SurveyLevel.FULL);
 
-                String id = existingNewCondition.getId();
-                if (id == null) continue;
+            // Set memory flags for UI/Scripting consistency
+            targetMarket.getMemoryWithoutUpdate().set("$surveyLevel", MarketAPI.SurveyLevel.FULL);
+            targetPlanet.getMemoryWithoutUpdate().set("$surveyLevel", MarketAPI.SurveyLevel.FULL);
 
+            // 4. Link Planet and Market
+            targetMarket.setPrimaryEntity(targetPlanet);
+            targetPlanet.setMarket(targetMarket);
+            targetPlanet.setFaction(Factions.PLAYER);
+
+            // 5. Register with Economy (This "wakes up" the market)
+            Global.getSector().getEconomy().addMarket(targetMarket, true);
+
+            // 6. Add Conditions and FORCE them to be surveyed/visible
+            for (String id : conditionIdsToCopy) {
                 if (!targetMarket.hasCondition(id)) {
                     targetMarket.addCondition(id);
+                    // This ensures the Ores/Rare Ores actually show up in the UI
+                    MarketConditionAPI newlyAdded = targetMarket.getCondition(id);
+                    if (newlyAdded != null) {
+                        newlyAdded.setSurveyed(true);
+                    }
                 }
             }
 
-            targetMarket.setPrimaryEntity(targetPlanet);
-            targetPlanet.setMarket(targetMarket);
-
-            targetPlanet.setFaction(Factions.PLAYER);
-
-            Global.getSector().getEconomy().addMarket(targetMarket, true);
-
-            String playerFactionId = Factions.PLAYER;
-            targetMarket.setFactionId(playerFactionId);
-            targetMarket.setPlayerOwned(true);
-
-            targetMarket.setAdmin(Global.getSector().getPlayerPerson());
-            makeProperPlayerColony(targetMarket);
+            // 7. Industry Copy Loop (with Farming/Aquaculture logic)
             if (oldMarket != null) {
                 targetMarket.setSize(oldMarket.getSize());
 
-                for (Industry oldIndustry : new ArrayList<Industry>(oldMarket.getIndustries())) {
-                    if (oldIndustry == null) continue;
+                // Check for specific resource requirements
+                boolean hasFarmland = false;
+                for (String id : conditionIdsToCopy) {
+                    if (id.startsWith("farmland_")) { hasFarmland = true; break; }
+                }
+                boolean hasWaterSurface = conditionIdsToCopy.contains(Conditions.WATER_SURFACE);
 
-                    String id = oldIndustry.getId();
-                    if (id == null) continue;
+                for (Industry oldInd : new ArrayList<>(oldMarket.getIndustries())) {
+                    String id = oldInd.getId();
+                    if (id.equals(Industries.FARMING) && !hasFarmland) continue;
+                    if (id.equals(Industries.AQUACULTURE) && !hasWaterSurface) continue;
 
                     if (!targetMarket.hasIndustry(id)) {
                         targetMarket.addIndustry(id);
                     }
                 }
 
-                if (oldMarket.hasSubmarket("storage") && !targetMarket.hasSubmarket("storage")) {
-                    targetMarket.addSubmarket("storage");
-                }
-
-                SectorEntityToken oldEntity = oldMarket.getPrimaryEntity();
-                if (oldEntity != null) {
-                    StarSystemAPI oldSystem = oldEntity.getStarSystem();
-                    Global.getSector().getEconomy().removeMarket(oldMarket);
-
-                    if (oldEntity instanceof PlanetAPI) {
-                        PlanetAPI oldPlanet = (PlanetAPI) oldEntity;
-                        oldPlanet.getMemoryWithoutUpdate().unset("$surveyLevel");
-                        oldPlanet.getMemoryWithoutUpdate().unset("$surveyData");
-                        oldPlanet.getMemoryWithoutUpdate().unset("$surveyState");
-
-                        MarketAPI husk = Global.getFactory().createMarket(
-                                oldPlanet.getId() + "_husk",
-                                oldPlanet.getName(),
-                                0
-                        );
-                        husk.setFactionId(Factions.NEUTRAL);
-                        husk.setSurveyLevel(MarketAPI.SurveyLevel.NONE);
-                        husk.setPrimaryEntity(oldPlanet);
-                        oldPlanet.setMarket(husk);
-                        Global.getSector().getEconomy().addMarket(husk, true);
+                // Submarkets
+                if (oldMarket.hasSubmarket(Submarkets.SUBMARKET_STORAGE)) {
+                    if (!targetMarket.hasSubmarket(Submarkets.SUBMARKET_STORAGE)) {
+                        targetMarket.addSubmarket(Submarkets.SUBMARKET_STORAGE);
                     }
-
-                    scrubSurveyData(oldSystem);
                 }
             }
-            if (!targetMarket.hasIndustry("population")) {
-                targetMarket.addIndustry("population");
-            }
-            if (!targetMarket.hasIndustry("spaceport")) {
-                targetMarket.addIndustry("spaceport");
+
+            // 8. Ensure Base Essentials
+            if (!targetMarket.hasIndustry(Industries.POPULATION)) targetMarket.addIndustry(Industries.POPULATION);
+            if (!targetMarket.hasIndustry(Industries.SPACEPORT)) targetMarket.addIndustry(Industries.SPACEPORT);
+            if (!targetMarket.hasSubmarket("local_resources")) targetMarket.addSubmarket("local_resources");
+
+            targetMarket.setAdmin(Global.getSector().getPlayerPerson());
+
+            // 9. Clean up the old location
+            if (oldMarket != null && oldMarket.getPrimaryEntity() != null) {
+                SectorEntityToken oldEntity = oldMarket.getPrimaryEntity();
+                Global.getSector().getEconomy().removeMarket(oldMarket);
+
+                if (oldEntity instanceof PlanetAPI) {
+                    PlanetAPI oldPlanet = (PlanetAPI) oldEntity;
+                    // Create the neutral husk
+                    MarketAPI husk = Global.getFactory().createMarket(oldPlanet.getId() + "_husk", oldPlanet.getName(), 0);
+                    husk.setFactionId(Factions.NEUTRAL);
+                    husk.setPrimaryEntity(oldPlanet);
+                    oldPlanet.setMarket(husk);
+                    Global.getSector().getEconomy().addMarket(husk, true);
+                }
             }
 
-            if (!targetMarket.hasSubmarket(Submarkets.SUBMARKET_STORAGE)) {
-                targetMarket.addSubmarket(Submarkets.SUBMARKET_STORAGE);
-            }
-
-            targetMarket.setSurveyLevel(MarketAPI.SurveyLevel.FULL);
-
-            //targetMarket.reapplyConditions();
+            // 10. Final Refresh
+            targetMarket.reapplyConditions();
             targetMarket.reapplyIndustries();
-        }
-
-        private void makeProperPlayerColony(MarketAPI market) {
-            String playerFactionId = Factions.PLAYER;
-
-            market.setFactionId(playerFactionId);
-            market.setPlayerOwned(true);
-            market.setAdmin(Global.getSector().getPlayerPerson());
-
-            // Make it behave like a real colony
-            if (!market.hasIndustry(Industries.POPULATION)) {
-                market.addIndustry(Industries.POPULATION);
-            }
-            if (!market.hasIndustry(Industries.SPACEPORT)) {
-                market.addIndustry(Industries.SPACEPORT);
-            }
-
-            // Storage / cargo
-            if (!market.hasSubmarket(Submarkets.SUBMARKET_STORAGE)) {
-                market.addSubmarket(Submarkets.SUBMARKET_STORAGE);
-            }
-
-            // Local resources / stockpile
-            if (!market.hasSubmarket("local_resources")) {
-                market.addSubmarket("local_resources");
-            }
-
-            market.setSurveyLevel(MarketAPI.SurveyLevel.FULL);
-            //market.reapplyConditions();
-            market.reapplyIndustries();
         }
     }
 }

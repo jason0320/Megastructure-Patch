@@ -9,10 +9,7 @@ import com.fs.starfarer.api.campaign.econ.MarketAPI;
 import com.fs.starfarer.api.campaign.listeners.EconomyTickListener;
 import com.fs.starfarer.api.campaign.listeners.ListenerManagerAPI;
 import com.fs.starfarer.api.impl.campaign.econ.impl.BaseIndustry;
-import com.fs.starfarer.api.impl.campaign.ids.Commodities;
-import com.fs.starfarer.api.impl.campaign.ids.Industries;
-import com.fs.starfarer.api.impl.campaign.ids.Items;
-import com.fs.starfarer.api.impl.campaign.ids.Tags;
+import com.fs.starfarer.api.impl.campaign.ids.*;
 import com.fs.starfarer.api.impl.campaign.intel.bar.events.AoTDAiScientistEventCreator;
 import com.fs.starfarer.api.impl.campaign.intel.bar.events.BarEventManager;
 import com.fs.starfarer.api.impl.campaign.intel.bar.events.ScientistAICoreBarEventCreator;
@@ -98,7 +95,6 @@ import org.apache.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 import org.json.JSONException;
 import org.lazywizard.lazylib.JSONUtils;
-import org.lazywizard.lazylib.ui.FontException;
 import org.lwjgl.util.vector.Vector2f;
 
 import com.fs.starfarer.api.BaseModPlugin;
@@ -111,11 +107,8 @@ import com.fs.starfarer.api.campaign.StarSystemAPI;
 import com.fs.starfarer.api.campaign.econ.Industry;
 import com.fs.starfarer.api.campaign.econ.MarketAPI;
 import com.fs.starfarer.api.campaign.econ.MarketConditionAPI;
-import com.fs.starfarer.api.impl.campaign.ids.Conditions;
-import com.fs.starfarer.api.impl.campaign.ids.Factions;
 import com.fs.starfarer.api.campaign.econ.SubmarketAPI;
 import com.fs.starfarer.api.impl.campaign.ids.Industries;
-import com.fs.starfarer.api.impl.campaign.ids.Submarkets;
 import com.fs.starfarer.api.util.IntervalUtil;
 import data.kaysaar.aotd.vok.campaign.econ.globalproduction.models.GPManager;
 import data.kaysaar.aotd.vok.misc.AoTDMisc;
@@ -311,7 +304,7 @@ public class AoTDVokModPlugin extends BaseModPlugin implements MarketContextList
         if (!l.hasListenerOfClass(CurrentResearchProgressUI.class)) {
             try {
                 l.addListener(new CurrentResearchProgressUI(), true);
-            } catch (FontException e) {
+            } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }
@@ -610,13 +603,48 @@ public class AoTDVokModPlugin extends BaseModPlugin implements MarketContextList
         }
 
         private PlanetAPI findTargetPlanet(StarSystemAPI system) {
+            List<PlanetAPI> eligible = new ArrayList<>();
+            List<PlanetAPI> terran = new ArrayList<>();
+            List<PlanetAPI> terranEccentric = new ArrayList<>();
+            List<PlanetAPI> jungle = new ArrayList<>();
+            List<PlanetAPI> tundraOrArid = new ArrayList<>();
+            List<PlanetAPI> desert = new ArrayList<>();
+
             for (PlanetAPI planet : system.getPlanets()) {
                 if (planet == null) continue;
                 if (planet.isStar() || planet.isGasGiant()) continue;
                 if (hasForbiddenAotdCondition(planet)) continue;
-                return planet;
+
+                eligible.add(planet);
+
+                String typeId = planet.getTypeId();
+                if ("terran".equals(typeId)) {
+                    terran.add(planet);
+                } else if ("terran-eccentric".equals(typeId)) {
+                    terranEccentric.add(planet);
+                } else if ("jungle".equals(typeId)) {
+                    jungle.add(planet);
+                } else if ("tundra".equals(typeId) || "arid".equals(typeId)) {
+                    tundraOrArid.add(planet);
+                } else if ("desert".equals(typeId)) {
+                    desert.add(planet);
+                }
             }
-            return null;
+
+            Random random = new Random();
+
+            if (!terran.isEmpty()) return terran.get(random.nextInt(terran.size()));
+            if (!terranEccentric.isEmpty()) return terranEccentric.get(random.nextInt(terranEccentric.size()));
+            if (!jungle.isEmpty()) return jungle.get(random.nextInt(jungle.size()));
+            if (!tundraOrArid.isEmpty()) return tundraOrArid.get(random.nextInt(tundraOrArid.size()));
+            if (!desert.isEmpty()) return desert.get(random.nextInt(desert.size()));
+
+            if (!eligible.isEmpty()) {
+                return eligible.get(random.nextInt(eligible.size()));
+            }
+            else {
+                return system.getPlanets().get(random.nextInt(system.getPlanets().size()));
+            }
         }
 
         private boolean hasForbiddenAotdCondition(PlanetAPI planet) {

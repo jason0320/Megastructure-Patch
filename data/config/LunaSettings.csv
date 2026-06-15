@@ -1,0 +1,5 @@
+fieldID,fieldName,fieldType,defaultValue,secondaryValue,fieldDescription,minValue,maxValue,tab
+disableMod,Turn Off Mod,Boolean,FALSE,,Turn off the whole mod (Requires new save).,,,
+forceStart,Forced Mega System Start,Boolean,FALSE,,Force own colony start in the mega system (Requires new save).,,,
+remnantMode,Remnant Nexus Neighbour,Boolean,FALSE,,Biased to start with Remnant Nexus (Requires new save).,,,
+derelictMode,Derelict Mothership Neighbour,Boolean,FALSE,,Biased to start with Derelict Mothership (Requires new save).,,,
